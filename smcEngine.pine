@@ -2,6 +2,42 @@
 indicator("SMC Engine - Trading Signals", overlay=true, max_bars_back=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
+// CUSTOM TYPE DEFINITIONS
+// ============================================================================
+
+type FVGData
+    fvgType    float  // 1 = Bullish, -1 = Bearish
+    idx        int
+    top        float
+    bottom     float
+    mitigated  bool
+
+type OrderBlockData
+    obType     float  // 1 = Bullish, -1 = Bearish
+    idx        int
+    high       float
+    low        float
+    mitigated  bool
+
+type StructureData
+    structType float  // 1 = BOS, 2 = CHOCH
+    direction  float  // 1 = Bullish, -1 = Bearish
+    idx        int
+    price      float
+
+type SweepData
+    sweepType  float  // 1 = BSL, -1 = SSL
+    idx        int
+    price      float
+    sweptPrice float
+
+type EQData
+    eqType     float  // 1 = EQH, -1 = EQL
+    idx1       int
+    idx2       int
+    price      float
+
+// ============================================================================
 // SETTINGS & INPUTS
 // ============================================================================
 
@@ -26,21 +62,19 @@ showOB = input.bool(true, title="Show Order Blocks", group="Display")
 showStructure = input.bool(true, title="Show BOS/CHOCH", group="Display")
 showSweeps = input.bool(true, title="Show Liquidity Sweeps", group="Display")
 showEQH = input.bool(true, title="Show Equal Highs/Lows", group="Display")
-showMB = input.bool(true, title="Show Mitigation Blocks", group="Display")
 showSignals = input.bool(true, title="Show Trade Signals", group="Display")
 
 // ============================================================================
-// DATA STRUCTURES & ARRAYS (Simulated)
+// DATA STRUCTURES & ARRAYS
 // ============================================================================
 
 var array<chart.point> swingHighs = array.new<chart.point>()
 var array<chart.point> swingLows = array.new<chart.point>()
-var array<map<string, float>> fvgs = array.new<map<string, float>>()
-var array<map<string, float>> orderBlocks = array.new<map<string, float>>()
-var array<map<string, float>> structures = array.new<map<string, float>>()
-var array<map<string, float>> sweeps = array.new<map<string, float>>()
-var array<map<string, float>> eqhEqls = array.new<map<string, float>>()
-var array<map<string, float>> mitigationBlocks = array.new<map<string, float>>()
+var array<FVGData> fvgs = array.new<FVGData>()
+var array<OrderBlockData> orderBlocks = array.new<OrderBlockData>()
+var array<StructureData> structures = array.new<StructureData>()
+var array<SweepData> sweeps = array.new<SweepData>()
+var array<EQData> eqhEqls = array.new<EQData>()
 
 // Trading Signals
 var float lastBuySignal = na
@@ -98,31 +132,13 @@ f_detectFVGs() =>
     if bar_index >= 2
         // Bullish FVG
         if high[2] < low[0] and close[1] > open[1]
-            bottom = high[2]
-            top = low[0]
-            
-            fvgMap = map.new<string, float>()
-            map.put(fvgMap, "type", 1) // 1 = Bullish
-            map.put(fvgMap, "idx", bar_index)
-            map.put(fvgMap, "top", top)
-            map.put(fvgMap, "bottom", bottom)
-            map.put(fvgMap, "mitigated", 0)
-            
-            array.push(fvgs, fvgMap)
+            fvgData = FVGData.new(1, bar_index, low[0], high[2], false)
+            array.push(fvgs, fvgData)
         
         // Bearish FVG
         if low[2] > high[0] and close[1] < open[1]
-            top = low[2]
-            bottom = high[0]
-            
-            fvgMap = map.new<string, float>()
-            map.put(fvgMap, "type", -1) // -1 = Bearish
-            map.put(fvgMap, "idx", bar_index)
-            map.put(fvgMap, "top", top)
-            map.put(fvgMap, "bottom", bottom)
-            map.put(fvgMap, "mitigated", 0)
-            
-            array.push(fvgs, fvgMap)
+            fvgData = FVGData.new(-1, bar_index, low[2], high[0], false)
+            array.push(fvgs, fvgData)
     
     // Keep FVG array manageable
     if array.size(fvgs) > 80
@@ -136,25 +152,13 @@ f_detectOrderBlocks() =>
     if bar_index >= 2
         // Bullish OB: Bearish candle that leads to bullish FVG
         if close[1] < open[1] and high[2] < low[0]
-            obMap = map.new<string, float>()
-            map.put(obMap, "type", 1) // 1 = Bullish
-            map.put(obMap, "idx", bar_index - 1)
-            map.put(obMap, "high", high[1])
-            map.put(obMap, "low", low[1])
-            map.put(obMap, "mitigated", 0)
-            
-            array.push(orderBlocks, obMap)
+            obData = OrderBlockData.new(1, bar_index - 1, high[1], low[1], false)
+            array.push(orderBlocks, obData)
         
         // Bearish OB: Bullish candle that leads to bearish FVG
         if close[1] > open[1] and low[2] > high[0]
-            obMap = map.new<string, float>()
-            map.put(obMap, "type", -1) // -1 = Bearish
-            map.put(obMap, "idx", bar_index - 1)
-            map.put(obMap, "high", high[1])
-            map.put(obMap, "low", low[1])
-            map.put(obMap, "mitigated", 0)
-            
-            array.push(orderBlocks, obMap)
+            obData = OrderBlockData.new(-1, bar_index - 1, high[1], low[1], false)
+            array.push(orderBlocks, obData)
     
     if array.size(orderBlocks) > 60
         array.shift(orderBlocks)
@@ -199,35 +203,23 @@ f_detectStructures() =>
         // Bullish BOS/CHOCH
         if not na(lastHighTarget)
             if close > lastHighTarget
-                structMap = map.new<string, float>()
+                structType = marketTrend == "BEARISH" ? 2.0 : 1.0 // CHOCH or BOS
                 if marketTrend == "BEARISH"
-                    map.put(structMap, "type", 2) // 2 = CHOCH
                     marketTrend := "BULLISH"
-                else
-                    map.put(structMap, "type", 1) // 1 = BOS
                 
-                map.put(structMap, "idx", bar_index)
-                map.put(structMap, "price", lastHighTarget)
-                map.put(structMap, "direction", 1) // 1 = Bullish
-                
-                array.push(structures, structMap)
+                structData = StructureData.new(structType, 1.0, bar_index, lastHighTarget)
+                array.push(structures, structData)
                 lastHighTarget := na
         
         // Bearish BOS/CHOCH
         if not na(lastLowTarget)
             if close < lastLowTarget
-                structMap = map.new<string, float>()
+                structType = marketTrend == "BULLISH" ? 2.0 : 1.0 // CHOCH or BOS
                 if marketTrend == "BULLISH"
-                    map.put(structMap, "type", 2) // 2 = CHOCH
                     marketTrend := "BEARISH"
-                else
-                    map.put(structMap, "type", 1) // 1 = BOS
                 
-                map.put(structMap, "idx", bar_index)
-                map.put(structMap, "price", lastLowTarget)
-                map.put(structMap, "direction", -1) // -1 = Bearish
-                
-                array.push(structures, structMap)
+                structData = StructureData.new(structType, -1.0, bar_index, lastLowTarget)
+                array.push(structures, structData)
                 lastLowTarget := na
     
     if array.size(structures) > 80
@@ -244,26 +236,16 @@ f_detectSweeps() =>
         if not na(recentHigh) and bar_index - recentHigh.x > 1 and bar_index - recentHigh.x < 60
             if high > recentHigh.y and close <= recentHigh.y
                 // Buy-Side Liquidity Sweep (BSL)
-                sweepMap = map.new<string, float>()
-                map.put(sweepMap, "type", 1) // 1 = BSL
-                map.put(sweepMap, "idx", bar_index)
-                map.put(sweepMap, "price", recentHigh.y)
-                map.put(sweepMap, "sweptPrice", high)
-                
-                array.push(sweeps, sweepMap)
+                sweepData = SweepData.new(1.0, bar_index, recentHigh.y, high)
+                array.push(sweeps, sweepData)
         
         // Find recent swing low
         recentLow = array.get(swingLows, array.size(swingLows) - 1)
         if not na(recentLow) and bar_index - recentLow.x > 1 and bar_index - recentLow.x < 60
             if low < recentLow.y and close >= recentLow.y
                 // Sell-Side Liquidity Sweep (SSL)
-                sweepMap = map.new<string, float>()
-                map.put(sweepMap, "type", -1) // -1 = SSL
-                map.put(sweepMap, "idx", bar_index)
-                map.put(sweepMap, "price", recentLow.y)
-                map.put(sweepMap, "sweptPrice", low)
-                
-                array.push(sweeps, sweepMap)
+                sweepData = SweepData.new(-1.0, bar_index, recentLow.y, low)
+                array.push(sweeps, sweepData)
     
     if array.size(sweeps) > 60
         array.shift(sweeps)
@@ -284,13 +266,8 @@ f_detectEqualPrices() =>
                 pctDiff = math.abs(h1.y - h2.y) / avg
                 
                 if pctDiff < eqhEqlThreshold
-                    eqhMap = map.new<string, float>()
-                    map.put(eqhMap, "type", 1) // 1 = EQH
-                    map.put(eqhMap, "idx1", h1.x)
-                    map.put(eqhMap, "idx2", h2.x)
-                    map.put(eqhMap, "price", avg)
-                    
-                    array.push(eqhEqls, eqhMap)
+                    eqData = EQData.new(1.0, h1.x, h2.x, avg)
+                    array.push(eqhEqls, eqData)
                     break
     
     // Equal Lows
@@ -304,13 +281,8 @@ f_detectEqualPrices() =>
                 pctDiff = math.abs(l1.y - l2.y) / avg
                 
                 if pctDiff < eqhEqlThreshold
-                    eqlMap = map.new<string, float>()
-                    map.put(eqlMap, "type", -1) // -1 = EQL
-                    map.put(eqlMap, "idx1", l1.x)
-                    map.put(eqlMap, "idx2", l2.x)
-                    map.put(eqlMap, "price", avg)
-                    
-                    array.push(eqhEqls, eqlMap)
+                    eqData = EQData.new(-1.0, l1.x, l2.x, avg)
+                    array.push(eqhEqls, eqData)
                     break
     
     if array.size(eqhEqls) > 40
@@ -330,22 +302,19 @@ f_generateSignals() =>
         lastStruct = array.get(structures, array.size(structures) - 1)
         lastOB = array.get(orderBlocks, array.size(orderBlocks) - 1)
         
-        isSslSweep = map.get(lastSweep, "type") == -1 // SSL
-        isChoch = map.get(lastStruct, "type") == 2 // CHOCH
-        isBullish = map.get(lastStruct, "direction") == 1
-        isBullishOB = map.get(lastOB, "type") == 1
+        isSslSweep = lastSweep.sweepType == -1 // SSL
+        isChoch = lastStruct.structType == 2 // CHOCH
+        isBullish = lastStruct.direction == 1
+        isBullishOB = lastOB.obType == 1
         
         if isSslSweep and isChoch and isBullish and isBullishOB
             // Check if price is retesting OB
-            obHigh = map.get(lastOB, "high")
-            obLow = map.get(lastOB, "low")
-            
-            if low <= obHigh and high >= obLow
+            if low <= lastOB.high and high >= lastOB.low
                 bullishSetup := true
                 
                 // Calculate Entry, SL, TP
                 entry = close
-                sl = obLow * 0.99 // Slightly below OB low
+                sl = lastOB.low * 0.99 // Slightly below OB low
                 tp = entry + (entry - sl) * prefRR
                 rr = (entry - sl) / (tp - entry)
                 
@@ -363,22 +332,19 @@ f_generateSignals() =>
         lastStruct = array.get(structures, array.size(structures) - 1)
         lastOB = array.get(orderBlocks, array.size(orderBlocks) - 1)
         
-        isBslSweep = map.get(lastSweep, "type") == 1 // BSL
-        isChoch = map.get(lastStruct, "type") == 2 // CHOCH
-        isBearish = map.get(lastStruct, "direction") == -1
-        isBearishOB = map.get(lastOB, "type") == -1
+        isBslSweep = lastSweep.sweepType == 1 // BSL
+        isChoch = lastStruct.structType == 2 // CHOCH
+        isBearish = lastStruct.direction == -1
+        isBearishOB = lastOB.obType == -1
         
         if isBslSweep and isChoch and isBearish and isBearishOB
             // Check if price is retesting OB
-            obHigh = map.get(lastOB, "high")
-            obLow = map.get(lastOB, "low")
-            
-            if low <= obHigh and high >= obLow
+            if low <= lastOB.high and high >= lastOB.low
                 bearishSetup := true
                 
                 // Calculate Entry, SL, TP
                 entry = close
-                sl = obHigh * 1.01 // Slightly above OB high
+                sl = lastOB.high * 1.01 // Slightly above OB high
                 tp = entry - (sl - entry) * prefRR
                 rr = (sl - entry) / (entry - tp)
                 
@@ -402,16 +368,10 @@ f_checkExitConditions() =>
         // Opposite BOS/CHOCH
         if array.size(structures) > 0
             recentStruct = array.get(structures, array.size(structures) - 1)
-            structType = map.get(recentStruct, "type")
-            structDir = map.get(recentStruct, "direction")
             
-            if structType == 1 and structDir == -1 // Bearish BOS
+            if recentStruct.direction == -1 // Bearish structure
                 shouldExit := true
-                exitReason := "Bearish BOS"
-            
-            if structType == 2 and structDir == -1 // Bearish CHOCH
-                shouldExit := true
-                exitReason := "Bearish CHOCH"
+                exitReason := recentStruct.structType == 2 ? "Bearish CHOCH" : "Bearish BOS"
         
         // Stop Loss Hit
         if close < lastSL
@@ -427,16 +387,10 @@ f_checkExitConditions() =>
         // Opposite BOS/CHOCH
         if array.size(structures) > 0
             recentStruct = array.get(structures, array.size(structures) - 1)
-            structType = map.get(recentStruct, "type")
-            structDir = map.get(recentStruct, "direction")
             
-            if structType == 1 and structDir == 1 // Bullish BOS
+            if recentStruct.direction == 1 // Bullish structure
                 shouldExit := true
-                exitReason := "Bullish BOS"
-            
-            if structType == 2 and structDir == 1 // Bullish CHOCH
-                shouldExit := true
-                exitReason := "Bullish CHOCH"
+                exitReason := recentStruct.structType == 2 ? "Bullish CHOCH" : "Bullish BOS"
         
         // Stop Loss Hit
         if close > lastSL
@@ -468,46 +422,30 @@ f_drawFVGs() =>
     if showFVG
         for i = math.max(0, array.size(fvgs) - 20) to array.size(fvgs) - 1
             fvg = array.get(fvgs, i)
-            fvgType = map.get(fvg, "type")
-            top = map.get(fvg, "top")
-            bottom = map.get(fvg, "bottom")
-            
-            fvgColor = fvgType == 1 ? color.new(color.green, 80) : color.new(color.red, 80)
-            box.new(bar_index - 10, bottom, bar_index, top, bgcolor=fvgColor, border_color=na)
+            fvgColor = fvg.fvgType == 1 ? color.new(color.green, 80) : color.new(color.red, 80)
+            box.new(bar_index - 10, fvg.bottom, bar_index, fvg.top, bgcolor=fvgColor, border_color=na)
 
 f_drawOrderBlocks() =>
     if showOB
         for i = math.max(0, array.size(orderBlocks) - 15) to array.size(orderBlocks) - 1
             ob = array.get(orderBlocks, i)
-            obType = map.get(ob, "type")
-            high = map.get(ob, "high")
-            low = map.get(ob, "low")
-            
-            obColor = obType == 1 ? color.new(color.blue, 70) : color.new(color.orange, 70)
-            box.new(bar_index - 20, low, bar_index, high, bgcolor=obColor, border_color=na)
+            obColor = ob.obType == 1 ? color.new(color.blue, 70) : color.new(color.orange, 70)
+            box.new(bar_index - 20, ob.low, bar_index, ob.high, bgcolor=obColor, border_color=na)
 
 f_drawStructures() =>
     if showStructure
         for i = math.max(0, array.size(structures) - 20) to array.size(structures) - 1
             struct = array.get(structures, i)
-            structType = map.get(struct, "type")
-            structDir = map.get(struct, "direction")
-            price = map.get(struct, "price")
-            
-            lineColor = structDir == 1 ? color.green : color.red
-            lineStyle = structType == 2 ? line.style_dashed : line.style_solid
-            
-            line.new(bar_index - 30, price, bar_index, price, color=lineColor, style=lineStyle, width=2)
+            lineColor = struct.direction == 1 ? color.green : color.red
+            lineStyle = struct.structType == 2 ? line.style_dashed : line.style_solid
+            line.new(bar_index - 30, struct.price, bar_index, struct.price, color=lineColor, style=lineStyle, width=2)
 
 f_drawSweeps() =>
     if showSweeps
         for i = math.max(0, array.size(sweeps) - 15) to array.size(sweeps) - 1
             sweep = array.get(sweeps, i)
-            sweepType = map.get(sweep, "type")
-            sweptPrice = map.get(sweep, "sweptPrice")
-            
-            sweepColor = sweepType == -1 ? color.new(color.lime, 50) : color.new(color.purple, 50)
-            label.new(bar_index, sweptPrice, "SWEEP", color=sweepColor, style=label.style_triangular_down, size=size.small)
+            sweepColor = sweep.sweepType == -1 ? color.new(color.lime, 50) : color.new(color.purple, 50)
+            label.new(bar_index, sweep.sweptPrice, "SWEEP", color=sweepColor, style=label.style_triangular_down, size=size.small)
 
 f_drawSignals() =>
     if showSignals and not na(lastBuySignal)
