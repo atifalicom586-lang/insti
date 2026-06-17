@@ -2,12 +2,6 @@
 indicator("SMC Engine - Professional", overlay=true, max_bars_back=500)
 
 // ============================================================================
-// STRATEGY TOGGLE (COMMENT OUT FOR INDICATOR MODE)
-// ============================================================================
-
-isStrategy = false
-
-// ============================================================================
 // INPUTS
 // ============================================================================
 
@@ -62,10 +56,21 @@ var bool lastWasBearishChoch = false
 var bool lastWasBullishBOS = false
 var bool lastWasBearishBOS = false
 
+var float lastFVGTop = na
+var float lastFVGBot = na
 var int lastFVGBarB = na
 var int lastFVGBarS = na
+var float lastFVGTopS = na
+var float lastFVGBotS = na
+
+var float lastOBHighB = na
+var float lastOBLowB = na
 var int lastOBBarB = na
+
+var float lastOBHighS = na
+var float lastOBLowS = na
 var int lastOBBarS = na
+
 var int lastSSLBar = na
 var int lastBSLBar = na
 
@@ -84,7 +89,7 @@ f_detectSwings() =>
                 break
         
         if isHigh
-            array.push(swingHighs, chart.point.new(bar_index, high[0]))
+            array.push(swingHighs, chart.point.new(x=bar_index, y=high[0]))
         
         isLow = true
         for j = 1 to p
@@ -93,7 +98,7 @@ f_detectSwings() =>
                 break
         
         if isLow
-            array.push(swingLows, chart.point.new(bar_index, low[0]))
+            array.push(swingLows, chart.point.new(x=bar_index, y=low[0]))
     
     if array.size(swingHighs) > 100
         array.shift(swingHighs)
@@ -107,19 +112,31 @@ f_detectSwings() =>
 f_detectFVGs() =>
     bullishFVG = false
     bearishFVG = false
+    fvgTopB = na
+    fvgBotB = na
+    fvgTopS = na
+    fvgBotS = na
     
     if bar_index >= 2
         // Bullish FVG
         if high[2] < low[0] and close[1] > open[1]
             bullishFVG := true
+            fvgBotB := high[2]
+            fvgTopB := low[0]
             lastFVGBarB := bar_index
+            lastFVGTop := fvgTopB
+            lastFVGBot := fvgBotB
         
         // Bearish FVG
         if low[2] > high[0] and close[1] < open[1]
             bearishFVG := true
+            fvgTopS := low[2]
+            fvgBotS := high[0]
             lastFVGBarS := bar_index
+            lastFVGTopS := fvgTopS
+            lastFVGBotS := fvgBotS
     
-    [bullishFVG, bearishFVG]
+    [bullishFVG, bearishFVG, fvgTopB, fvgBotB, fvgTopS, fvgBotS]
 
 // ============================================================================
 // DETECT ORDER BLOCKS (OB)
@@ -140,6 +157,8 @@ f_detectOrderBlocks() =>
             obHighB := high[1]
             obLowB := low[1]
             lastOBBarB := bar_index - 1
+            lastOBHighB := obHighB
+            lastOBLowB := obLowB
         
         // Bearish OB (Bullish candle before bearish collapse)
         if close[1] > open[1] and low[2] > high[0]
@@ -147,6 +166,8 @@ f_detectOrderBlocks() =>
             obHighS := high[1]
             obLowS := low[1]
             lastOBBarS := bar_index - 1
+            lastOBHighS := obHighS
+            lastOBLowS := obLowS
     
     [bullishOB, bearishOB, obHighB, obLowB, obHighS, obLowS]
 
@@ -312,41 +333,29 @@ f_checkExits() =>
     if buyActive
         if close < lastBuySL
             buyActive := false
-            if isStrategy
-                strategy.close("Buy", alert_message="BUY SL Hit")
         
         if close > lastBuyTP
             buyActive := false
-            if isStrategy
-                strategy.close("Buy", alert_message="BUY TP Hit")
         
         if marketTrend == "BEARISH"
             buyActive := false
-            if isStrategy
-                strategy.close("Buy", alert_message="Bearish Turn")
     
     if sellActive
         if close > lastSellSL
             sellActive := false
-            if isStrategy
-                strategy.close("Sell", alert_message="SELL SL Hit")
         
         if close < lastSellTP
             sellActive := false
-            if isStrategy
-                strategy.close("Sell", alert_message="SELL TP Hit")
         
         if marketTrend == "BULLISH"
             sellActive := false
-            if isStrategy
-                strategy.close("Sell", alert_message="Bullish Turn")
 
 // ============================================================================
 // EXECUTE DETECTION
 // ============================================================================
 
 f_detectSwings()
-[bullishFVG, bearishFVG] = f_detectFVGs()
+[bullishFVG, bearishFVG, fvgTopB, fvgBotB, fvgTopS, fvgBotS] = f_detectFVGs()
 [bullishOB, bearishOB, obHighB, obLowB, obHighS, obLowS] = f_detectOrderBlocks()
 [sslSweep, bslSweep] = f_detectSweeps()
 f_detectStructures()
@@ -362,45 +371,45 @@ if showSwings
     if array.size(swingHighs) > 0
         for i = math.max(0, array.size(swingHighs) - 20) to array.size(swingHighs) - 1
             sh = array.get(swingHighs, i)
-            label.new(sh.x, sh.y, "H", color=color.new(color.green, 0), style=label.style_diamond, size=size.tiny, textcolor=color.white)
+            label.new(x=sh.x, y=sh.y, text="H", color=color.new(color.green, 0), style=label.style_diamond, size=size.tiny, textcolor=color.white)
     
     if array.size(swingLows) > 0
         for i = math.max(0, array.size(swingLows) - 20) to array.size(swingLows) - 1
             sl = array.get(swingLows, i)
-            label.new(sl.x, sl.y, "L", color=color.new(color.red, 0), style=label.style_diamond, size=size.tiny, textcolor=color.white)
+            label.new(x=sl.x, y=sl.y, text="L", color=color.new(color.red, 0), style=label.style_diamond, size=size.tiny, textcolor=color.white)
 
 // ============================================================================
 // DRAWING: FVG
 // ============================================================================
 
 if showFVG
-    if not na(lastFVGBarB) and bar_index - lastFVGBarB < 100
-        box.new(lastFVGBarB - 1, high[bar_index - lastFVGBarB + 1], bar_index + 20, low[bar_index - lastFVGBarB], bgcolor=color.new(color.green, 85), border_color=na)
+    if not na(lastFVGBarB) and bar_index - lastFVGBarB < 100 and not na(lastFVGTop) and not na(lastFVGBot)
+        box.new(left=lastFVGBarB - 1, top=lastFVGTop, right=bar_index + 20, bottom=lastFVGBot, bgcolor=color.new(color.green, 85), border_color=na)
     
-    if not na(lastFVGBarS) and bar_index - lastFVGBarS < 100
-        box.new(lastFVGBarS - 1, high[bar_index - lastFVGBarS], bar_index + 20, low[bar_index - lastFVGBarS + 1], bgcolor=color.new(color.red, 85), border_color=na)
+    if not na(lastFVGBarS) and bar_index - lastFVGBarS < 100 and not na(lastFVGTopS) and not na(lastFVGBotS)
+        box.new(left=lastFVGBarS - 1, top=lastFVGTopS, right=bar_index + 20, bottom=lastFVGBotS, bgcolor=color.new(color.red, 85), border_color=na)
 
 // ============================================================================
 // DRAWING: ORDER BLOCKS
 // ============================================================================
 
 if showOB
-    if not na(lastOBBarB) and bar_index - lastOBBarB < 100
-        box.new(lastOBBarB, lastBuySL, bar_index + 50, lastBuyEntry + (lastBuyEntry - lastBuySL), bgcolor=color.new(color.blue, 80), border_color=na)
+    if not na(lastOBBarB) and bar_index - lastOBBarB < 100 and not na(lastOBHighB) and not na(lastOBLowB)
+        box.new(left=lastOBBarB, top=lastOBHighB, right=bar_index + 50, bottom=lastOBLowB, bgcolor=color.new(color.blue, 80), border_color=na)
     
-    if not na(lastOBBarS) and bar_index - lastOBBarS < 100
-        box.new(lastOBBarS, lastSellEntry - (lastSellSL - lastSellEntry), bar_index + 50, lastSellSL, bgcolor=color.new(color.orange, 80), border_color=na)
+    if not na(lastOBBarS) and bar_index - lastOBBarS < 100 and not na(lastOBHighS) and not na(lastOBLowS)
+        box.new(left=lastOBBarS, top=lastOBHighS, right=bar_index + 50, bottom=lastOBLowS, bgcolor=color.new(color.orange, 80), border_color=na)
 
 // ============================================================================
 // DRAWING: STRUCTURES (BOS/CHOCH)
 // ============================================================================
 
 if showStructure
-    if lastWasBullishChoch
-        line.new(bar_index - 30, lastHighTarget, bar_index, lastHighTarget, color=color.new(color.green, 0), width=2, style=line.style_dashed)
+    if lastWasBullishChoch and not na(lastHighTarget)
+        line.new(x1=bar_index - 30, y1=lastHighTarget, x2=bar_index, y2=lastHighTarget, color=color.new(color.green, 0), width=2, style=line.style_dashed)
     
-    if lastWasBearishChoch
-        line.new(bar_index - 30, lastLowTarget, bar_index, lastLowTarget, color=color.new(color.red, 0), width=2, style=line.style_dashed)
+    if lastWasBearishChoch and not na(lastLowTarget)
+        line.new(x1=bar_index - 30, y1=lastLowTarget, x2=bar_index, y2=lastLowTarget, color=color.new(color.red, 0), width=2, style=line.style_dashed)
 
 // ============================================================================
 // DRAWING: SWEEPS
@@ -408,10 +417,10 @@ if showStructure
 
 if showSweeps
     if not na(lastSSLBar) and bar_index - lastSSLBar < 50
-        label.new(lastSSLBar, low + (high - low) * 0.5, "SSL", color=color.new(color.lime, 0), style=label.style_label_down, size=size.small, textcolor=color.black)
+        label.new(x=lastSSLBar, y=low + (high - low) * 0.5, text="SSL", color=color.new(color.lime, 0), style=label.style_label_down, size=size.small, textcolor=color.black)
     
     if not na(lastBSLBar) and bar_index - lastBSLBar < 50
-        label.new(lastBSLBar, high - (high - low) * 0.5, "BSL", color=color.new(color.purple, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
+        label.new(x=lastBSLBar, y=high - (high - low) * 0.5, text="BSL", color=color.new(color.purple, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
 
 // ============================================================================
 // DRAWING: EQUAL HIGHS & LOWS
@@ -419,10 +428,10 @@ if showSweeps
 
 if showEQ
     if hasEQH
-        line.new(bar_index - 50, eqhPrice, bar_index, eqhPrice, color=color.new(color.green, 40), width=1, style=line.style_dotted)
+        line.new(x1=bar_index - 50, y1=eqhPrice, x2=bar_index, y2=eqhPrice, color=color.new(color.green, 40), width=1, style=line.style_dotted)
     
     if hasEQL
-        line.new(bar_index - 50, eqlPrice, bar_index, eqlPrice, color=color.new(color.red, 40), width=1, style=line.style_dotted)
+        line.new(x1=bar_index - 50, y1=eqlPrice, x2=bar_index, y2=eqlPrice, color=color.new(color.red, 40), width=1, style=line.style_dotted)
 
 // ============================================================================
 // DRAWING: TRADE SIGNALS
@@ -430,14 +439,14 @@ if showEQ
 
 if showSignals
     if buyActive
-        label.new(lastBuyBar, lastBuySL - (lastBuySL - lastBuyEntry) * 0.1, "BUY\n" + str.tostring(lastBuyEntry, "0.00000"), color=color.new(color.green, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
-        line.new(lastBuyBar, lastBuySL, bar_index, lastBuySL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
-        line.new(lastBuyBar, lastBuyTP, bar_index, lastBuyTP, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+        label.new(x=lastBuyBar, y=lastBuySL - (lastBuySL - lastBuyEntry) * 0.1, text="BUY\n" + str.tostring(lastBuyEntry, "0.00000"), color=color.new(color.green, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
+        line.new(x1=lastBuyBar, y1=lastBuySL, x2=bar_index, y2=lastBuySL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
+        line.new(x1=lastBuyBar, y1=lastBuyTP, x2=bar_index, y2=lastBuyTP, color=color.new(color.green, 0), width=1, style=line.style_dashed)
     
     if sellActive
-        label.new(lastSellBar, lastSellSL + (lastSellSL - lastSellEntry) * 0.1, "SELL\n" + str.tostring(lastSellEntry, "0.00000"), color=color.new(color.red, 0), style=label.style_label_down, size=size.small, textcolor=color.white)
-        line.new(lastSellBar, lastSellSL, bar_index, lastSellSL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
-        line.new(lastSellBar, lastSellTP, bar_index, lastSellTP, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+        label.new(x=lastSellBar, y=lastSellSL + (lastSellSL - lastSellEntry) * 0.1, text="SELL\n" + str.tostring(lastSellEntry, "0.00000"), color=color.new(color.red, 0), style=label.style_label_down, size=size.small, textcolor=color.white)
+        line.new(x1=lastSellBar, y1=lastSellSL, x2=bar_index, y2=lastSellSL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
+        line.new(x1=lastSellBar, y1=lastSellTP, x2=bar_index, y2=lastSellTP, color=color.new(color.green, 0), width=1, style=line.style_dashed)
 
 // ============================================================================
 // ALERTS
@@ -462,51 +471,38 @@ if bslSweep and barstate.isconfirmed
     alert("BSL Sweep Detected", alert.freq_once_per_bar)
 
 // ============================================================================
-// STRATEGY MODE
-// ============================================================================
-
-if isStrategy
-    if buyActive
-        strategy.entry("Buy", strategy.long, alert_message="BUY Entry")
-        strategy.exit("Buy Exit", "Buy", stop=lastBuySL, limit=lastBuyTP)
-    
-    if sellActive
-        strategy.entry("Sell", strategy.short, alert_message="SELL Entry")
-        strategy.exit("Sell Exit", "Sell", stop=lastSellSL, limit=lastSellTP)
-
-// ============================================================================
 // INFO TABLE
 // ============================================================================
 
 if showTable
-    var table infoTable = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 80), border_color=color.gray, frame_color=color.gray)
+    var table infoTable = table.new(position=position.top_right, columns=2, rows=10, bgcolor=color.new(color.black, 80), border_color=color.gray, frame_color=color.gray)
     
-    table.cell(infoTable, 0, 0, "SMC ENGINE", text_color=color.white, bgcolor=color.new(color.blue, 50))
-    table.cell(infoTable, 1, 0, "Status", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(infoTable, column=0, row=0, text="SMC ENGINE", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(infoTable, column=1, row=0, text="Status", text_color=color.white, bgcolor=color.new(color.blue, 50))
     
-    table.cell(infoTable, 0, 1, "Trend", text_color=color.white)
-    table.cell(infoTable, 1, 1, marketTrend, text_color=marketTrend=="BULLISH"?color.green:color.red)
+    table.cell(infoTable, column=0, row=1, text="Trend", text_color=color.white)
+    table.cell(infoTable, column=1, row=1, text=marketTrend, text_color=marketTrend=="BULLISH"?color.green:color.red)
     
-    table.cell(infoTable, 0, 2, "Buy Active", text_color=color.white)
-    table.cell(infoTable, 1, 2, buyActive?"YES":"NO", text_color=buyActive?color.green:color.gray)
+    table.cell(infoTable, column=0, row=2, text="Buy Active", text_color=color.white)
+    table.cell(infoTable, column=1, row=2, text=buyActive?"YES":"NO", text_color=buyActive?color.green:color.gray)
     
-    table.cell(infoTable, 0, 3, "Entry", text_color=color.white)
-    table.cell(infoTable, 1, 3, buyActive?str.tostring(lastBuyEntry, "0.00000"):"-", text_color=color.white)
+    table.cell(infoTable, column=0, row=3, text="Entry", text_color=color.white)
+    table.cell(infoTable, column=1, row=3, text=buyActive?str.tostring(lastBuyEntry, "0.00000"):"-", text_color=color.white)
     
-    table.cell(infoTable, 0, 4, "SL", text_color=color.white)
-    table.cell(infoTable, 1, 4, buyActive?str.tostring(lastBuySL, "0.00000"):"-", text_color=color.red)
+    table.cell(infoTable, column=0, row=4, text="SL", text_color=color.white)
+    table.cell(infoTable, column=1, row=4, text=buyActive?str.tostring(lastBuySL, "0.00000"):"-", text_color=color.red)
     
-    table.cell(infoTable, 0, 5, "TP", text_color=color.white)
-    table.cell(infoTable, 1, 5, buyActive?str.tostring(lastBuyTP, "0.00000"):"-", text_color=color.green)
+    table.cell(infoTable, column=0, row=5, text="TP", text_color=color.white)
+    table.cell(infoTable, column=1, row=5, text=buyActive?str.tostring(lastBuyTP, "0.00000"):"-", text_color=color.green)
     
-    table.cell(infoTable, 0, 6, "RR", text_color=color.white)
-    table.cell(infoTable, 1, 6, buyActive?str.tostring(lastBuyRR, "0.00"):"-", text_color=color.yellow)
+    table.cell(infoTable, column=0, row=6, text="RR", text_color=color.white)
+    table.cell(infoTable, column=1, row=6, text=buyActive?str.tostring(lastBuyRR, "0.00"):"-", text_color=color.yellow)
     
-    table.cell(infoTable, 0, 7, "Swings", text_color=color.white)
-    table.cell(infoTable, 1, 7, "H:" + str.tostring(array.size(swingHighs)) + " L:" + str.tostring(array.size(swingLows)), text_color=color.white)
+    table.cell(infoTable, column=0, row=7, text="Swings", text_color=color.white)
+    table.cell(infoTable, column=1, row=7, text="H:" + str.tostring(array.size(swingHighs)) + " L:" + str.tostring(array.size(swingLows)), text_color=color.white)
     
-    table.cell(infoTable, 0, 8, "Last Sweep", text_color=color.white)
-    table.cell(infoTable, 1, 8, not na(lastSSLBar)?"SSL":not na(lastBSLBar)?"BSL":"-", text_color=color.white)
+    table.cell(infoTable, column=0, row=8, text="Last Sweep", text_color=color.white)
+    table.cell(infoTable, column=1, row=8, text=not na(lastSSLBar)?"SSL":not na(lastBSLBar)?"BSL":"-", text_color=color.white)
     
-    table.cell(infoTable, 0, 9, "Last Structure", text_color=color.white)
-    table.cell(infoTable, 1, 9, lastWasBullishChoch?"B.CHOCH":lastWasBearishChoch?"S.CHOCH":lastWasBullishBOS?"B.BOS":lastWasBearishBOS?"S.BOS":"-", text_color=color.white)
+    table.cell(infoTable, column=0, row=9, text="Last Structure", text_color=color.white)
+    table.cell(infoTable, column=1, row=9, text=lastWasBullishChoch?"B.CHOCH":lastWasBearishChoch?"S.CHOCH":lastWasBullishBOS?"B.BOS":lastWasBearishBOS?"S.BOS":"-", text_color=color.white)
