@@ -1,104 +1,82 @@
 //@version=6
-indicator("SMC Engine - Trading Signals", overlay=true, max_bars_back=500, max_lines_count=500, max_labels_count=500)
+indicator("SMC Engine - Professional", overlay=true, max_bars_back=500)
 
 // ============================================================================
-// CUSTOM TYPE DEFINITIONS
+// STRATEGY TOGGLE (COMMENT OUT FOR INDICATOR MODE)
 // ============================================================================
 
-type FVGData
-    fvgType    int  // 1 = Bullish, -1 = Bearish
-    idx        int
-    top        float
-    bottom     float
-    mitigated  bool
-
-type OrderBlockData
-    obType     int  // 1 = Bullish, -1 = Bearish
-    idx        int
-    high       float
-    low        float
-    mitigated  bool
-
-type StructureData
-    structType int  // 1 = BOS, 2 = CHOCH
-    direction  int  // 1 = Bullish, -1 = Bearish
-    idx        int
-    price      float
-
-type SweepData
-    sweepType  int  // 1 = BSL, -1 = SSL
-    idx        int
-    price      float
-    sweptPrice float
-
-type EQData
-    eqType     int  // 1 = EQH, -1 = EQL
-    idx1       int
-    idx2       int
-    price      float
+isStrategy = false
 
 // ============================================================================
-// SETTINGS & INPUTS
+// INPUTS
 // ============================================================================
 
-// Mode Selection
-mode = input.string("Indicator", title="Mode", options=["Indicator", "Strategy"], group="Mode")
-
-// Timeframe & Risk Management
+// Risk Management
 riskPercent = input.float(1.0, title="Risk %", minval=0.1, maxval=5, step=0.1, group="Risk Management")
-minRR = input.float(2.0, title="Min Risk:Reward", minval=1.0, maxval=5, step=0.5, group="Risk Management")
-prefRR = input.float(3.0, title="Preferred Risk:Reward", minval=1.5, maxval=5, step=0.5, group="Risk Management")
+minRR = input.float(2.0, title="Min RR", minval=1.0, maxval=10, step=0.5, group="Risk Management")
+prefRR = input.float(3.0, title="Preferred RR", minval=1.5, maxval=10, step=0.5, group="Risk Management")
 
-// SMC Detection Parameters
-swingWindow = input.int(3, title="Swing Pivot Window", minval=2, maxval=5, group="SMC Parameters")
-fvgThreshold = input.float(0.0007, title="FVG Threshold %", minval=0.0001, maxval=0.01, step=0.0001, group="SMC Parameters")
-eqhEqlThreshold = input.float(0.0007, title="EQH/EQL Threshold %", minval=0.0001, maxval=0.01, step=0.0001, group="SMC Parameters")
-lookbackWindow = input.int(60, title="Lookback Window (candles)", minval=20, maxval=200, group="SMC Parameters")
+// SMC Parameters
+swingWindow = input.int(3, title="Swing Window", minval=2, maxval=5, group="SMC")
+fvgThreshold = input.float(0.0007, title="FVG Threshold %", minval=0.0001, maxval=0.01, step=0.0001, group="SMC")
+eqhEqlThreshold = input.float(0.0007, title="EQH/EQL Threshold %", minval=0.0001, maxval=0.01, step=0.0001, group="SMC")
+lookbackWindow = input.int(60, title="Lookback Window", minval=20, maxval=200, group="SMC")
 
-// Display Options
-showSwings = input.bool(true, title="Show Swing Points", group="Display")
+// Display
+showSwings = input.bool(true, title="Show Swings", group="Display")
 showFVG = input.bool(true, title="Show FVG", group="Display")
 showOB = input.bool(true, title="Show Order Blocks", group="Display")
 showStructure = input.bool(true, title="Show BOS/CHOCH", group="Display")
-showSweeps = input.bool(true, title="Show Liquidity Sweeps", group="Display")
-showEQH = input.bool(true, title="Show Equal Highs/Lows", group="Display")
-showSignals = input.bool(true, title="Show Trade Signals", group="Display")
+showSweeps = input.bool(true, title="Show Sweeps", group="Display")
+showEQ = input.bool(true, title="Show EQH/EQL", group="Display")
+showSignals = input.bool(true, title="Show Signals", group="Display")
+showTable = input.bool(true, title="Show Info Table", group="Display")
 
 // ============================================================================
-// DATA STRUCTURES & ARRAYS
+// GLOBAL VARIABLES
 // ============================================================================
 
 var array<chart.point> swingHighs = array.new<chart.point>()
 var array<chart.point> swingLows = array.new<chart.point>()
-var array<FVGData> fvgs = array.new<FVGData>()
-var array<OrderBlockData> orderBlocks = array.new<OrderBlockData>()
-var array<StructureData> structures = array.new<StructureData>()
-var array<SweepData> sweeps = array.new<SweepData>()
-var array<EQData> eqhEqls = array.new<EQData>()
 
-// Trading Signals
-var float lastBuySignal = na
-var float lastSellSignal = na
-var float lastEntryPrice = na
-var float lastSL = na
-var float lastTP = na
-var float lastRR = na
-var string lastSignalType = ""
-
-// Market Trend Tracker
-var string marketTrend = "BULLISH"
 var float lastHighTarget = na
 var float lastLowTarget = na
+var string marketTrend = "BULLISH"
+
+var float lastBuyEntry = na
+var float lastBuySL = na
+var float lastBuyTP = na
+var float lastBuyRR = na
+var int lastBuyBar = na
+var bool buyActive = false
+
+var float lastSellEntry = na
+var float lastSellSL = na
+var float lastSellTP = na
+var float lastSellRR = na
+var int lastSellBar = na
+var bool sellActive = false
+
+var bool lastWasBullishChoch = false
+var bool lastWasBearishChoch = false
+var bool lastWasBullishBOS = false
+var bool lastWasBearishBOS = false
+
+var int lastFVGBarB = na
+var int lastFVGBarS = na
+var int lastOBBarB = na
+var int lastOBBarS = na
+var int lastSSLBar = na
+var int lastBSLBar = na
 
 // ============================================================================
-// SWING HIGH/LOW DETECTION (Fractals)
+// DETECT SWING HIGHS & LOWS
 // ============================================================================
 
 f_detectSwings() =>
     p = swingWindow
     
     if bar_index >= p * 2
-        // Check for Swing High
         isHigh = true
         for j = 1 to p
             if high[j] > high[0] or high[j] >= high[0]
@@ -106,9 +84,8 @@ f_detectSwings() =>
                 break
         
         if isHigh
-            array.push(swingHighs, chart.point.new(bar_index, high))
+            array.push(swingHighs, chart.point.new(bar_index, high[0]))
         
-        // Check for Swing Low
         isLow = true
         for j = 1 to p
             if low[j] < low[0] or low[j] <= low[0]
@@ -116,55 +93,89 @@ f_detectSwings() =>
                 break
         
         if isLow
-            array.push(swingLows, chart.point.new(bar_index, low))
+            array.push(swingLows, chart.point.new(bar_index, low[0]))
     
-    // Keep arrays manageable
     if array.size(swingHighs) > 100
         array.shift(swingHighs)
     if array.size(swingLows) > 100
         array.shift(swingLows)
 
 // ============================================================================
-// FAIR VALUE GAP (FVG) DETECTION
+// DETECT FAIR VALUE GAPS (FVG)
 // ============================================================================
 
 f_detectFVGs() =>
+    bullishFVG = false
+    bearishFVG = false
+    
     if bar_index >= 2
         // Bullish FVG
         if high[2] < low[0] and close[1] > open[1]
-            fvgData = FVGData.new(1, bar_index, low[0], high[2], false)
-            array.push(fvgs, fvgData)
+            bullishFVG := true
+            lastFVGBarB := bar_index
         
         // Bearish FVG
         if low[2] > high[0] and close[1] < open[1]
-            fvgData = FVGData.new(-1, bar_index, low[2], high[0], false)
-            array.push(fvgs, fvgData)
+            bearishFVG := true
+            lastFVGBarS := bar_index
     
-    // Keep FVG array manageable
-    if array.size(fvgs) > 80
-        array.shift(fvgs)
+    [bullishFVG, bearishFVG]
 
 // ============================================================================
-// ORDER BLOCK DETECTION
+// DETECT ORDER BLOCKS (OB)
 // ============================================================================
 
 f_detectOrderBlocks() =>
-    if bar_index >= 2
-        // Bullish OB: Bearish candle that leads to bullish FVG
-        if close[1] < open[1] and high[2] < low[0]
-            obData = OrderBlockData.new(1, bar_index - 1, high[1], low[1], false)
-            array.push(orderBlocks, obData)
-        
-        // Bearish OB: Bullish candle that leads to bearish FVG
-        if close[1] > open[1] and low[2] > high[0]
-            obData = OrderBlockData.new(-1, bar_index - 1, high[1], low[1], false)
-            array.push(orderBlocks, obData)
+    bullishOB = false
+    bearishOB = false
+    obHighB = 0.0
+    obLowB = 0.0
+    obHighS = 0.0
+    obLowS = 0.0
     
-    if array.size(orderBlocks) > 60
-        array.shift(orderBlocks)
+    if bar_index >= 2
+        // Bullish OB (Bearish candle before bullish expansion)
+        if close[1] < open[1] and high[2] < low[0]
+            bullishOB := true
+            obHighB := high[1]
+            obLowB := low[1]
+            lastOBBarB := bar_index - 1
+        
+        // Bearish OB (Bullish candle before bearish collapse)
+        if close[1] > open[1] and low[2] > high[0]
+            bearishOB := true
+            obHighS := high[1]
+            obLowS := low[1]
+            lastOBBarS := bar_index - 1
+    
+    [bullishOB, bearishOB, obHighB, obLowB, obHighS, obLowS]
 
 // ============================================================================
-// BREAK OF STRUCTURE (BOS) & CHANGE OF CHARACTER (CHOCH) DETECTION
+// DETECT LIQUIDITY SWEEPS
+// ============================================================================
+
+f_detectSweeps() =>
+    sslSweep = false
+    bslSweep = false
+    
+    if array.size(swingHighs) > 0
+        recentHigh = array.get(swingHighs, array.size(swingHighs) - 1)
+        if not na(recentHigh.y) and bar_index - recentHigh.x > 1 and bar_index - recentHigh.x < 60
+            if high > recentHigh.y and close <= recentHigh.y
+                bslSweep := true
+                lastBSLBar := bar_index
+    
+    if array.size(swingLows) > 0
+        recentLow = array.get(swingLows, array.size(swingLows) - 1)
+        if not na(recentLow.y) and bar_index - recentLow.x > 1 and bar_index - recentLow.x < 60
+            if low < recentLow.y and close >= recentLow.y
+                sslSweep := true
+                lastSSLBar := bar_index
+    
+    [sslSweep, bslSweep]
+
+// ============================================================================
+// DETECT BOS & CHOCH
 // ============================================================================
 
 f_detectStructures() =>
@@ -172,7 +183,6 @@ f_detectStructures() =>
         recentHighs = array.new<chart.point>()
         recentLows = array.new<chart.point>()
         
-        // Get recent swings
         for i = 0 to math.min(array.size(swingHighs) - 1, 30)
             sh = array.get(swingHighs, array.size(swingHighs) - 1 - i)
             if bar_index - sh.x < lookbackWindow and bar_index - sh.x > 0
@@ -183,7 +193,6 @@ f_detectStructures() =>
             if bar_index - sl.x < lookbackWindow and bar_index - sl.x > 0
                 array.push(recentLows, sl)
         
-        // Find highest and lowest
         if array.size(recentHighs) > 0
             highestRecent = array.get(recentHighs, 0)
             for i = 1 to array.size(recentHighs) - 1
@@ -201,368 +210,303 @@ f_detectStructures() =>
             lastLowTarget := lowestRecent.y
         
         // Bullish BOS/CHOCH
-        if not na(lastHighTarget)
-            if close > lastHighTarget
-                structType = marketTrend == "BEARISH" ? 2 : 1 // CHOCH or BOS
-                if marketTrend == "BEARISH"
-                    marketTrend := "BULLISH"
-                
-                structData = StructureData.new(structType, 1, bar_index, lastHighTarget)
-                array.push(structures, structData)
-                lastHighTarget := na
+        if not na(lastHighTarget) and close > lastHighTarget
+            if marketTrend == "BEARISH"
+                lastWasBullishChoch := true
+                marketTrend := "BULLISH"
+            else
+                lastWasBullishBOS := true
+            lastHighTarget := na
         
         // Bearish BOS/CHOCH
-        if not na(lastLowTarget)
-            if close < lastLowTarget
-                structType = marketTrend == "BULLISH" ? 2 : 1 // CHOCH or BOS
-                if marketTrend == "BULLISH"
-                    marketTrend := "BEARISH"
-                
-                structData = StructureData.new(structType, -1, bar_index, lastLowTarget)
-                array.push(structures, structData)
-                lastLowTarget := na
-    
-    if array.size(structures) > 80
-        array.shift(structures)
+        if not na(lastLowTarget) and close < lastLowTarget
+            if marketTrend == "BULLISH"
+                lastWasBearishChoch := true
+                marketTrend := "BEARISH"
+            else
+                lastWasBearishBOS := true
+            lastLowTarget := na
 
 // ============================================================================
-// LIQUIDITY SWEEP DETECTION (SSL & BSL)
-// ============================================================================
-
-f_detectSweeps() =>
-    if array.size(swingHighs) > 0 and array.size(swingLows) > 0
-        // Find recent swing high
-        recentHigh = array.get(swingHighs, array.size(swingHighs) - 1)
-        if not na(recentHigh) and bar_index - recentHigh.x > 1 and bar_index - recentHigh.x < 60
-            if high > recentHigh.y and close <= recentHigh.y
-                // Buy-Side Liquidity Sweep (BSL)
-                sweepData = SweepData.new(1, bar_index, recentHigh.y, high)
-                array.push(sweeps, sweepData)
-        
-        // Find recent swing low
-        recentLow = array.get(swingLows, array.size(swingLows) - 1)
-        if not na(recentLow) and bar_index - recentLow.x > 1 and bar_index - recentLow.x < 60
-            if low < recentLow.y and close >= recentLow.y
-                // Sell-Side Liquidity Sweep (SSL)
-                sweepData = SweepData.new(-1, bar_index, recentLow.y, low)
-                array.push(sweeps, sweepData)
-    
-    if array.size(sweeps) > 60
-        array.shift(sweeps)
-
-// ============================================================================
-// EQUAL HIGHS (EQH) & EQUAL LOWS (EQL) DETECTION
+// DETECT EQUAL HIGHS & LOWS
 // ============================================================================
 
 f_detectEqualPrices() =>
-    // Equal Highs
+    eqhPrice = 0.0
+    eqlPrice = 0.0
+    hasEQH = false
+    hasEQL = false
+    
     if array.size(swingHighs) > 1
         for i = 0 to math.min(array.size(swingHighs) - 2, 20)
             h1 = array.get(swingHighs, i)
-            h2 = array.get(swingHighs, i + 1)
-            
-            if h2.x - h1.x <= lookbackWindow and h2.x - h1.x > 0
-                avg = (h1.y + h2.y) / 2
-                pctDiff = math.abs(h1.y - h2.y) / avg
+            if i + 1 < array.size(swingHighs)
+                h2 = array.get(swingHighs, i + 1)
                 
-                if pctDiff < eqhEqlThreshold
-                    eqData = EQData.new(1, h1.x, h2.x, avg)
-                    array.push(eqhEqls, eqData)
-                    break
+                if h2.x - h1.x <= lookbackWindow and h2.x - h1.x > 0
+                    avg = (h1.y + h2.y) / 2
+                    pctDiff = math.abs(h1.y - h2.y) / avg
+                    
+                    if pctDiff < eqhEqlThreshold
+                        eqhPrice := avg
+                        hasEQH := true
+                        break
     
-    // Equal Lows
     if array.size(swingLows) > 1
         for i = 0 to math.min(array.size(swingLows) - 2, 20)
             l1 = array.get(swingLows, i)
-            l2 = array.get(swingLows, i + 1)
-            
-            if l2.x - l1.x <= lookbackWindow and l2.x - l1.x > 0
-                avg = (l1.y + l2.y) / 2
-                pctDiff = math.abs(l1.y - l2.y) / avg
+            if i + 1 < array.size(swingLows)
+                l2 = array.get(swingLows, i + 1)
                 
-                if pctDiff < eqhEqlThreshold
-                    eqData = EQData.new(-1, l1.x, l2.x, avg)
-                    array.push(eqhEqls, eqData)
-                    break
+                if l2.x - l1.x <= lookbackWindow and l2.x - l1.x > 0
+                    avg = (l1.y + l2.y) / 2
+                    pctDiff = math.abs(l1.y - l2.y) / avg
+                    
+                    if pctDiff < eqhEqlThreshold
+                        eqlPrice := avg
+                        hasEQL := true
+                        break
     
-    if array.size(eqhEqls) > 40
-        array.shift(eqhEqls)
+    [hasEQH, hasEQL, eqhPrice, eqlPrice]
 
 // ============================================================================
-// SIGNAL GENERATION: BUY & SELL
+// GENERATE TRADING SIGNALS
 // ============================================================================
 
-f_generateSignals() =>
-    bullishSetup = false
-    bearishSetup = false
+f_generateSignals(sslSweep, bslSweep, bullishOB, bearishOB, obHighB, obLowB, obHighS, obLowS) =>
+    if not buyActive and sslSweep and lastWasBullishChoch and bullishOB and low <= obHighB and high >= obLowB
+        entry = close
+        sl = obLowB * 0.9985
+        tp = entry + (entry - sl) * prefRR
+        rr = (entry - sl) / (tp - entry)
+        
+        if rr >= minRR and rr <= 10
+            lastBuyEntry := entry
+            lastBuySL := sl
+            lastBuyTP := tp
+            lastBuyRR := rr
+            lastBuyBar := bar_index
+            buyActive := true
+            lastWasBullishChoch := false
     
-    // Bullish Setup: SSL Sweep -> Bullish CHOCH -> Bullish OB Retest
-    if array.size(sweeps) > 0 and array.size(structures) > 0 and array.size(orderBlocks) > 0
-        lastSweep = array.get(sweeps, array.size(sweeps) - 1)
-        lastStruct = array.get(structures, array.size(structures) - 1)
-        lastOB = array.get(orderBlocks, array.size(orderBlocks) - 1)
+    if not sellActive and bslSweep and lastWasBearishChoch and bearishOB and low <= obHighS and high >= obLowS
+        entry = close
+        sl = obHighS * 1.0015
+        tp = entry - (sl - entry) * prefRR
+        rr = (sl - entry) / (entry - tp)
         
-        isSslSweep = lastSweep.sweepType == -1 // SSL
-        isChoch = lastStruct.structType == 2 // CHOCH
-        isBullish = lastStruct.direction == 1
-        isBullishOB = lastOB.obType == 1
-        
-        if isSslSweep and isChoch and isBullish and isBullishOB
-            // Check if price is retesting OB
-            if low <= lastOB.high and high >= lastOB.low
-                bullishSetup := true
-                
-                // Calculate Entry, SL, TP
-                entry = close
-                sl = lastOB.low * 0.99 // Slightly below OB low
-                tp = entry + (entry - sl) * prefRR
-                rr = (entry - sl) / (tp - entry)
-                
-                if rr >= minRR and rr <= 10
-                    lastBuySignal := bar_index
-                    lastEntryPrice := entry
-                    lastSL := sl
-                    lastTP := tp
-                    lastRR := rr
-                    lastSignalType := "BUY"
-    
-    // Bearish Setup: BSL Sweep -> Bearish CHOCH -> Bearish OB Retest
-    if array.size(sweeps) > 0 and array.size(structures) > 0 and array.size(orderBlocks) > 0
-        lastSweep = array.get(sweeps, array.size(sweeps) - 1)
-        lastStruct = array.get(structures, array.size(structures) - 1)
-        lastOB = array.get(orderBlocks, array.size(orderBlocks) - 1)
-        
-        isBslSweep = lastSweep.sweepType == 1 // BSL
-        isChoch = lastStruct.structType == 2 // CHOCH
-        isBearish = lastStruct.direction == -1
-        isBearishOB = lastOB.obType == -1
-        
-        if isBslSweep and isChoch and isBearish and isBearishOB
-            // Check if price is retesting OB
-            if low <= lastOB.high and high >= lastOB.low
-                bearishSetup := true
-                
-                // Calculate Entry, SL, TP
-                entry = close
-                sl = lastOB.high * 1.01 // Slightly above OB high
-                tp = entry - (sl - entry) * prefRR
-                rr = (sl - entry) / (entry - tp)
-                
-                if rr >= minRR and rr <= 10
-                    lastSellSignal := bar_index
-                    lastEntryPrice := entry
-                    lastSL := sl
-                    lastTP := tp
-                    lastRR := rr
-                    lastSignalType := "SELL"
+        if rr >= minRR and rr <= 10
+            lastSellEntry := entry
+            lastSellSL := sl
+            lastSellTP := tp
+            lastSellRR := rr
+            lastSellBar := bar_index
+            sellActive := true
+            lastWasBearishChoch := false
 
 // ============================================================================
-// EXIT CONDITIONS
+// CHECK EXIT CONDITIONS
 // ============================================================================
 
-f_checkExitConditions() =>
-    shouldExit = false
-    exitReason = ""
+f_checkExits() =>
+    if buyActive
+        if close < lastBuySL
+            buyActive := false
+            if isStrategy
+                strategy.close("Buy", alert_message="BUY SL Hit")
+        
+        if close > lastBuyTP
+            buyActive := false
+            if isStrategy
+                strategy.close("Buy", alert_message="BUY TP Hit")
+        
+        if marketTrend == "BEARISH"
+            buyActive := false
+            if isStrategy
+                strategy.close("Buy", alert_message="Bearish Turn")
     
-    if lastSignalType == "BUY"
-        // Opposite BOS/CHOCH
-        if array.size(structures) > 0
-            recentStruct = array.get(structures, array.size(structures) - 1)
-            
-            if recentStruct.direction == -1 // Bearish structure
-                shouldExit := true
-                exitReason := recentStruct.structType == 2 ? "Bearish CHOCH" : "Bearish BOS"
+    if sellActive
+        if close > lastSellSL
+            sellActive := false
+            if isStrategy
+                strategy.close("Sell", alert_message="SELL SL Hit")
         
-        // Stop Loss Hit
-        if close < lastSL
-            shouldExit := true
-            exitReason := "SL Hit"
+        if close < lastSellTP
+            sellActive := false
+            if isStrategy
+                strategy.close("Sell", alert_message="SELL TP Hit")
         
-        // Take Profit Hit
-        if close > lastTP
-            shouldExit := true
-            exitReason := "TP Hit"
-    
-    if lastSignalType == "SELL"
-        // Opposite BOS/CHOCH
-        if array.size(structures) > 0
-            recentStruct = array.get(structures, array.size(structures) - 1)
-            
-            if recentStruct.direction == 1 // Bullish structure
-                shouldExit := true
-                exitReason := recentStruct.structType == 2 ? "Bullish CHOCH" : "Bullish BOS"
-        
-        // Stop Loss Hit
-        if close > lastSL
-            shouldExit := true
-            exitReason := "SL Hit"
-        
-        // Take Profit Hit
-        if close < lastTP
-            shouldExit := true
-            exitReason := "TP Hit"
-    
-    [shouldExit, exitReason]
+        if marketTrend == "BULLISH"
+            sellActive := false
+            if isStrategy
+                strategy.close("Sell", alert_message="Bullish Turn")
 
 // ============================================================================
-// DRAWING FUNCTIONS
-// ============================================================================
-
-f_drawSwings() =>
-    if showSwings
-        for i = math.max(0, array.size(swingHighs) - 20) to array.size(swingHighs) - 1
-            sh = array.get(swingHighs, i)
-            label.new(sh.x, sh.y, "H", color=color.green, style=label.style_diamond, size=size.tiny)
-        
-        for i = math.max(0, array.size(swingLows) - 20) to array.size(swingLows) - 1
-            sl = array.get(swingLows, i)
-            label.new(sl.x, sl.y, "L", color=color.red, style=label.style_diamond, size=size.tiny)
-
-f_drawFVGs() =>
-    if showFVG
-        for i = math.max(0, array.size(fvgs) - 20) to array.size(fvgs) - 1
-            fvg = array.get(fvgs, i)
-            fvgColor = fvg.fvgType == 1 ? color.new(color.green, 80) : color.new(color.red, 80)
-            box.new(bar_index - 10, fvg.bottom, bar_index, fvg.top, bgcolor=fvgColor, border_color=na)
-
-f_drawOrderBlocks() =>
-    if showOB
-        for i = math.max(0, array.size(orderBlocks) - 15) to array.size(orderBlocks) - 1
-            ob = array.get(orderBlocks, i)
-            obColor = ob.obType == 1 ? color.new(color.blue, 70) : color.new(color.orange, 70)
-            box.new(bar_index - 20, ob.low, bar_index, ob.high, bgcolor=obColor, border_color=na)
-
-f_drawStructures() =>
-    if showStructure
-        for i = math.max(0, array.size(structures) - 20) to array.size(structures) - 1
-            struct = array.get(structures, i)
-            lineColor = struct.direction == 1 ? color.green : color.red
-            lineStyle = struct.structType == 2 ? line.style_dashed : line.style_solid
-            line.new(bar_index - 30, struct.price, bar_index, struct.price, color=lineColor, style=lineStyle, width=2)
-
-f_drawSweeps() =>
-    if showSweeps
-        for i = math.max(0, array.size(sweeps) - 15) to array.size(sweeps) - 1
-            sweep = array.get(sweeps, i)
-            sweepColor = sweep.sweepType == -1 ? color.new(color.lime, 50) : color.new(color.purple, 50)
-            label.new(bar_index, sweep.sweptPrice, "SWEEP", color=sweepColor, style=label.style_triangular_down, size=size.small)
-
-f_drawSignals() =>
-    if showSignals and not na(lastBuySignal)
-        if lastSignalType == "BUY"
-            label.new(bar_index, lastEntryPrice, "BUY\n" + str.tostring(lastEntryPrice, "0.00000"), 
-                color=color.new(color.green, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
-            
-            // Draw SL & TP
-            line.new(lastBuySignal, lastSL, bar_index, lastSL, color=color.red, width=2, style=line.style_dashed)
-            line.new(lastBuySignal, lastTP, bar_index, lastTP, color=color.green, width=2, style=line.style_dashed)
-            
-            // RR Label
-            label.new(bar_index, lastTP + (lastTP - lastSL) * 0.2, "RR: " + str.tostring(lastRR, "0.00"), 
-                color=color.gray, style=label.style_label_center, size=size.small)
-    
-    if showSignals and not na(lastSellSignal)
-        if lastSignalType == "SELL"
-            label.new(bar_index, lastEntryPrice, "SELL\n" + str.tostring(lastEntryPrice, "0.00000"), 
-                color=color.new(color.red, 0), style=label.style_label_down, size=size.small, textcolor=color.white)
-            
-            // Draw SL & TP
-            line.new(lastSellSignal, lastSL, bar_index, lastSL, color=color.red, width=2, style=line.style_dashed)
-            line.new(lastSellSignal, lastTP, bar_index, lastTP, color=color.green, width=2, style=line.style_dashed)
-            
-            // RR Label
-            label.new(bar_index, lastTP - (lastSL - lastTP) * 0.2, "RR: " + str.tostring(lastRR, "0.00"), 
-                color=color.gray, style=label.style_label_center, size=size.small)
-
-// ============================================================================
-// MAIN EXECUTION
+// EXECUTE DETECTION
 // ============================================================================
 
 f_detectSwings()
-f_detectFVGs()
-f_detectOrderBlocks()
+[bullishFVG, bearishFVG] = f_detectFVGs()
+[bullishOB, bearishOB, obHighB, obLowB, obHighS, obLowS] = f_detectOrderBlocks()
+[sslSweep, bslSweep] = f_detectSweeps()
 f_detectStructures()
-f_detectSweeps()
-f_detectEqualPrices()
-f_generateSignals()
-
-[shouldExit, exitReason] = f_checkExitConditions()
-
-if shouldExit and lastSignalType != ""
-    label.new(bar_index, close, "CLOSE\n" + exitReason, color=color.gray, style=label.style_label_center, size=size.small)
-    lastSignalType := ""
-
-// Drawing
-f_drawSwings()
-f_drawFVGs()
-f_drawOrderBlocks()
-f_drawStructures()
-f_drawSweeps()
-f_drawSignals()
+[hasEQH, hasEQL, eqhPrice, eqlPrice] = f_detectEqualPrices()
+f_generateSignals(sslSweep, bslSweep, bullishOB, bearishOB, obHighB, obLowB, obHighS, obLowS)
+f_checkExits()
 
 // ============================================================================
-// ALERTING
+// DRAWING: SWING POINTS
 // ============================================================================
 
-if lastSignalType == "BUY" and barstate.isconfirmed
-    alert("BUY Signal: Entry = " + str.tostring(lastEntryPrice, "0.00000") + 
-          " | SL = " + str.tostring(lastSL, "0.00000") + 
-          " | TP = " + str.tostring(lastTP, "0.00000") + 
-          " | RR = " + str.tostring(lastRR, "0.00"), alert.freq_once_per_bar)
-
-if lastSignalType == "SELL" and barstate.isconfirmed
-    alert("SELL Signal: Entry = " + str.tostring(lastEntryPrice, "0.00000") + 
-          " | SL = " + str.tostring(lastSL, "0.00000") + 
-          " | TP = " + str.tostring(lastTP, "0.00000") + 
-          " | RR = " + str.tostring(lastRR, "0.00"), alert.freq_once_per_bar)
-
-if shouldExit
-    alert("CLOSE Trade: " + exitReason, alert.freq_once_per_bar)
+if showSwings
+    if array.size(swingHighs) > 0
+        for i = math.max(0, array.size(swingHighs) - 20) to array.size(swingHighs) - 1
+            sh = array.get(swingHighs, i)
+            label.new(sh.x, sh.y, "H", color=color.new(color.green, 0), style=label.style_diamond, size=size.tiny, textcolor=color.white)
+    
+    if array.size(swingLows) > 0
+        for i = math.max(0, array.size(swingLows) - 20) to array.size(swingLows) - 1
+            sl = array.get(swingLows, i)
+            label.new(sl.x, sl.y, "L", color=color.new(color.red, 0), style=label.style_diamond, size=size.tiny, textcolor=color.white)
 
 // ============================================================================
-// STRATEGY MODE (if selected)
+// DRAWING: FVG
 // ============================================================================
 
-if mode == "Strategy"
-    if lastSignalType == "BUY"
+if showFVG
+    if not na(lastFVGBarB) and bar_index - lastFVGBarB < 100
+        box.new(lastFVGBarB - 1, high[bar_index - lastFVGBarB + 1], bar_index + 20, low[bar_index - lastFVGBarB], bgcolor=color.new(color.green, 85), border_color=na)
+    
+    if not na(lastFVGBarS) and bar_index - lastFVGBarS < 100
+        box.new(lastFVGBarS - 1, high[bar_index - lastFVGBarS], bar_index + 20, low[bar_index - lastFVGBarS + 1], bgcolor=color.new(color.red, 85), border_color=na)
+
+// ============================================================================
+// DRAWING: ORDER BLOCKS
+// ============================================================================
+
+if showOB
+    if not na(lastOBBarB) and bar_index - lastOBBarB < 100
+        box.new(lastOBBarB, lastBuySL, bar_index + 50, lastBuyEntry + (lastBuyEntry - lastBuySL), bgcolor=color.new(color.blue, 80), border_color=na)
+    
+    if not na(lastOBBarS) and bar_index - lastOBBarS < 100
+        box.new(lastOBBarS, lastSellEntry - (lastSellSL - lastSellEntry), bar_index + 50, lastSellSL, bgcolor=color.new(color.orange, 80), border_color=na)
+
+// ============================================================================
+// DRAWING: STRUCTURES (BOS/CHOCH)
+// ============================================================================
+
+if showStructure
+    if lastWasBullishChoch
+        line.new(bar_index - 30, lastHighTarget, bar_index, lastHighTarget, color=color.new(color.green, 0), width=2, style=line.style_dashed)
+    
+    if lastWasBearishChoch
+        line.new(bar_index - 30, lastLowTarget, bar_index, lastLowTarget, color=color.new(color.red, 0), width=2, style=line.style_dashed)
+
+// ============================================================================
+// DRAWING: SWEEPS
+// ============================================================================
+
+if showSweeps
+    if not na(lastSSLBar) and bar_index - lastSSLBar < 50
+        label.new(lastSSLBar, low + (high - low) * 0.5, "SSL", color=color.new(color.lime, 0), style=label.style_label_down, size=size.small, textcolor=color.black)
+    
+    if not na(lastBSLBar) and bar_index - lastBSLBar < 50
+        label.new(lastBSLBar, high - (high - low) * 0.5, "BSL", color=color.new(color.purple, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
+
+// ============================================================================
+// DRAWING: EQUAL HIGHS & LOWS
+// ============================================================================
+
+if showEQ
+    if hasEQH
+        line.new(bar_index - 50, eqhPrice, bar_index, eqhPrice, color=color.new(color.green, 40), width=1, style=line.style_dotted)
+    
+    if hasEQL
+        line.new(bar_index - 50, eqlPrice, bar_index, eqlPrice, color=color.new(color.red, 40), width=1, style=line.style_dotted)
+
+// ============================================================================
+// DRAWING: TRADE SIGNALS
+// ============================================================================
+
+if showSignals
+    if buyActive
+        label.new(lastBuyBar, lastBuySL - (lastBuySL - lastBuyEntry) * 0.1, "BUY\n" + str.tostring(lastBuyEntry, "0.00000"), color=color.new(color.green, 0), style=label.style_label_up, size=size.small, textcolor=color.white)
+        line.new(lastBuyBar, lastBuySL, bar_index, lastBuySL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
+        line.new(lastBuyBar, lastBuyTP, bar_index, lastBuyTP, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+    
+    if sellActive
+        label.new(lastSellBar, lastSellSL + (lastSellSL - lastSellEntry) * 0.1, "SELL\n" + str.tostring(lastSellEntry, "0.00000"), color=color.new(color.red, 0), style=label.style_label_down, size=size.small, textcolor=color.white)
+        line.new(lastSellBar, lastSellSL, bar_index, lastSellSL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
+        line.new(lastSellBar, lastSellTP, bar_index, lastSellTP, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+if buyActive and barstate.isconfirmed
+    alert("BUY: Entry=" + str.tostring(lastBuyEntry, "0.00000") + " SL=" + str.tostring(lastBuySL, "0.00000") + " TP=" + str.tostring(lastBuyTP, "0.00000") + " RR=" + str.tostring(lastBuyRR, "0.00"), alert.freq_once_per_bar)
+
+if sellActive and barstate.isconfirmed
+    alert("SELL: Entry=" + str.tostring(lastSellEntry, "0.00000") + " SL=" + str.tostring(lastSellSL, "0.00000") + " TP=" + str.tostring(lastSellTP, "0.00000") + " RR=" + str.tostring(lastSellRR, "0.00"), alert.freq_once_per_bar)
+
+if lastWasBullishChoch and barstate.isconfirmed
+    alert("Bullish CHOCH", alert.freq_once_per_bar)
+
+if lastWasBearishChoch and barstate.isconfirmed
+    alert("Bearish CHOCH", alert.freq_once_per_bar)
+
+if sslSweep and barstate.isconfirmed
+    alert("SSL Sweep Detected", alert.freq_once_per_bar)
+
+if bslSweep and barstate.isconfirmed
+    alert("BSL Sweep Detected", alert.freq_once_per_bar)
+
+// ============================================================================
+// STRATEGY MODE
+// ============================================================================
+
+if isStrategy
+    if buyActive
         strategy.entry("Buy", strategy.long, alert_message="BUY Entry")
-        strategy.exit("Buy Exit", "Buy", stop=lastSL, limit=lastTP, alert_message="Buy Closed")
+        strategy.exit("Buy Exit", "Buy", stop=lastBuySL, limit=lastBuyTP)
     
-    if lastSignalType == "SELL"
+    if sellActive
         strategy.entry("Sell", strategy.short, alert_message="SELL Entry")
-        strategy.exit("Sell Exit", "Sell", stop=lastSL, limit=lastTP, alert_message="Sell Closed")
+        strategy.exit("Sell Exit", "Sell", stop=lastSellSL, limit=lastSellTP)
+
+// ============================================================================
+// INFO TABLE
+// ============================================================================
+
+if showTable
+    var table infoTable = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 80), border_color=color.gray, frame_color=color.gray)
     
-    if shouldExit
-        strategy.close_all(alert_message="Trade Closed: " + exitReason)
-
-// ============================================================================
-// INFO PANEL (Table Display)
-// ============================================================================
-
-var table infoTable = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 80), border_color=color.gray)
-
-if barstate.islast
     table.cell(infoTable, 0, 0, "SMC ENGINE", text_color=color.white, bgcolor=color.new(color.blue, 50))
-    table.cell(infoTable, 1, 0, "Signal", text_color=color.white)
-    table.cell(infoTable, 2, 0, lastSignalType, text_color=color.white)
+    table.cell(infoTable, 1, 0, "Status", text_color=color.white, bgcolor=color.new(color.blue, 50))
     
-    table.cell(infoTable, 0, 1, "Entry", text_color=color.white)
-    table.cell(infoTable, 1, 1, str.tostring(lastEntryPrice, "0.00000"), text_color=color.white)
+    table.cell(infoTable, 0, 1, "Trend", text_color=color.white)
+    table.cell(infoTable, 1, 1, marketTrend, text_color=marketTrend=="BULLISH"?color.green:color.red)
     
-    table.cell(infoTable, 0, 2, "SL", text_color=color.white)
-    table.cell(infoTable, 1, 2, str.tostring(lastSL, "0.00000"), text_color=color.red)
+    table.cell(infoTable, 0, 2, "Buy Active", text_color=color.white)
+    table.cell(infoTable, 1, 2, buyActive?"YES":"NO", text_color=buyActive?color.green:color.gray)
     
-    table.cell(infoTable, 0, 3, "TP", text_color=color.white)
-    table.cell(infoTable, 1, 3, str.tostring(lastTP, "0.00000"), text_color=color.green)
+    table.cell(infoTable, 0, 3, "Entry", text_color=color.white)
+    table.cell(infoTable, 1, 3, buyActive?str.tostring(lastBuyEntry, "0.00000"):"-", text_color=color.white)
     
-    table.cell(infoTable, 0, 4, "RR Ratio", text_color=color.white)
-    table.cell(infoTable, 1, 4, str.tostring(lastRR, "0.00"), text_color=color.yellow)
+    table.cell(infoTable, 0, 4, "SL", text_color=color.white)
+    table.cell(infoTable, 1, 4, buyActive?str.tostring(lastBuySL, "0.00000"):"-", text_color=color.red)
     
-    table.cell(infoTable, 0, 5, "Trend", text_color=color.white)
-    table.cell(infoTable, 1, 5, marketTrend, text_color=marketTrend=="BULLISH"?color.green:color.red)
+    table.cell(infoTable, 0, 5, "TP", text_color=color.white)
+    table.cell(infoTable, 1, 5, buyActive?str.tostring(lastBuyTP, "0.00000"):"-", text_color=color.green)
     
-    table.cell(infoTable, 0, 6, "Swings", text_color=color.white)
-    table.cell(infoTable, 1, 6, "H: " + str.tostring(array.size(swingHighs)) + " L: " + str.tostring(array.size(swingLows)), text_color=color.white)
+    table.cell(infoTable, 0, 6, "RR", text_color=color.white)
+    table.cell(infoTable, 1, 6, buyActive?str.tostring(lastBuyRR, "0.00"):"-", text_color=color.yellow)
     
-    table.cell(infoTable, 0, 7, "FVG | OB | Struct", text_color=color.white)
-    table.cell(infoTable, 1, 7, str.tostring(array.size(fvgs)) + " | " + str.tostring(array.size(orderBlocks)) + " | " + str.tostring(array.size(structures)), text_color=color.white)
+    table.cell(infoTable, 0, 7, "Swings", text_color=color.white)
+    table.cell(infoTable, 1, 7, "H:" + str.tostring(array.size(swingHighs)) + " L:" + str.tostring(array.size(swingLows)), text_color=color.white)
+    
+    table.cell(infoTable, 0, 8, "Last Sweep", text_color=color.white)
+    table.cell(infoTable, 1, 8, not na(lastSSLBar)?"SSL":not na(lastBSLBar)?"BSL":"-", text_color=color.white)
+    
+    table.cell(infoTable, 0, 9, "Last Structure", text_color=color.white)
+    table.cell(infoTable, 1, 9, lastWasBullishChoch?"B.CHOCH":lastWasBearishChoch?"S.CHOCH":lastWasBullishBOS?"B.BOS":lastWasBearishBOS?"S.BOS":"-", text_color=color.white)
