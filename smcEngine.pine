@@ -6,33 +6,33 @@ indicator("SMC Engine - Trading Signals", overlay=true, max_bars_back=500, max_l
 // ============================================================================
 
 type FVGData
-    fvgType    float  // 1 = Bullish, -1 = Bearish
+    fvgType    int  // 1 = Bullish, -1 = Bearish
     idx        int
     top        float
     bottom     float
     mitigated  bool
 
 type OrderBlockData
-    obType     float  // 1 = Bullish, -1 = Bearish
+    obType     int  // 1 = Bullish, -1 = Bearish
     idx        int
     high       float
     low        float
     mitigated  bool
 
 type StructureData
-    structType float  // 1 = BOS, 2 = CHOCH
-    direction  float  // 1 = Bullish, -1 = Bearish
+    structType int  // 1 = BOS, 2 = CHOCH
+    direction  int  // 1 = Bullish, -1 = Bearish
     idx        int
     price      float
 
 type SweepData
-    sweepType  float  // 1 = BSL, -1 = SSL
+    sweepType  int  // 1 = BSL, -1 = SSL
     idx        int
     price      float
     sweptPrice float
 
 type EQData
-    eqType     float  // 1 = EQH, -1 = EQL
+    eqType     int  // 1 = EQH, -1 = EQL
     idx1       int
     idx2       int
     price      float
@@ -203,22 +203,22 @@ f_detectStructures() =>
         // Bullish BOS/CHOCH
         if not na(lastHighTarget)
             if close > lastHighTarget
-                structType = marketTrend == "BEARISH" ? 2.0 : 1.0 // CHOCH or BOS
+                structType = marketTrend == "BEARISH" ? 2 : 1 // CHOCH or BOS
                 if marketTrend == "BEARISH"
                     marketTrend := "BULLISH"
                 
-                structData = StructureData.new(structType, 1.0, bar_index, lastHighTarget)
+                structData = StructureData.new(structType, 1, bar_index, lastHighTarget)
                 array.push(structures, structData)
                 lastHighTarget := na
         
         // Bearish BOS/CHOCH
         if not na(lastLowTarget)
             if close < lastLowTarget
-                structType = marketTrend == "BULLISH" ? 2.0 : 1.0 // CHOCH or BOS
+                structType = marketTrend == "BULLISH" ? 2 : 1 // CHOCH or BOS
                 if marketTrend == "BULLISH"
                     marketTrend := "BEARISH"
                 
-                structData = StructureData.new(structType, -1.0, bar_index, lastLowTarget)
+                structData = StructureData.new(structType, -1, bar_index, lastLowTarget)
                 array.push(structures, structData)
                 lastLowTarget := na
     
@@ -236,7 +236,7 @@ f_detectSweeps() =>
         if not na(recentHigh) and bar_index - recentHigh.x > 1 and bar_index - recentHigh.x < 60
             if high > recentHigh.y and close <= recentHigh.y
                 // Buy-Side Liquidity Sweep (BSL)
-                sweepData = SweepData.new(1.0, bar_index, recentHigh.y, high)
+                sweepData = SweepData.new(1, bar_index, recentHigh.y, high)
                 array.push(sweeps, sweepData)
         
         // Find recent swing low
@@ -244,7 +244,7 @@ f_detectSweeps() =>
         if not na(recentLow) and bar_index - recentLow.x > 1 and bar_index - recentLow.x < 60
             if low < recentLow.y and close >= recentLow.y
                 // Sell-Side Liquidity Sweep (SSL)
-                sweepData = SweepData.new(-1.0, bar_index, recentLow.y, low)
+                sweepData = SweepData.new(-1, bar_index, recentLow.y, low)
                 array.push(sweeps, sweepData)
     
     if array.size(sweeps) > 60
@@ -266,7 +266,7 @@ f_detectEqualPrices() =>
                 pctDiff = math.abs(h1.y - h2.y) / avg
                 
                 if pctDiff < eqhEqlThreshold
-                    eqData = EQData.new(1.0, h1.x, h2.x, avg)
+                    eqData = EQData.new(1, h1.x, h2.x, avg)
                     array.push(eqhEqls, eqData)
                     break
     
@@ -281,7 +281,7 @@ f_detectEqualPrices() =>
                 pctDiff = math.abs(l1.y - l2.y) / avg
                 
                 if pctDiff < eqhEqlThreshold
-                    eqData = EQData.new(-1.0, l1.x, l2.x, avg)
+                    eqData = EQData.new(-1, l1.x, l2.x, avg)
                     array.push(eqhEqls, eqData)
                     break
     
